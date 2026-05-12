@@ -1,4 +1,4 @@
-name: دانلودر پی اچ
+name: دانلودر پی اچ (پیشرفته)
 
 on:
   workflow_dispatch:
@@ -8,128 +8,57 @@ on:
         required: true
         type: string
       quality:
-        description: 'Video quality (yt-dlp format selector)'
-        required: true
-        type: string
-        default: 'bestvideo[height<=720]+bestaudio/best[ext=mp4]/best'
-      archive_name:
-        description: 'Base name for the RAR archive (if file is split)'
+        description: 'Video quality'
         required: false
         type: string
-        default: 'video'
+        default: 'best'
 
 permissions:
   contents: write
 
 jobs:
-  download-and-maybe-split:
+  download:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-
-      - name: Install yt-dlp and bc
+      - name: Install yt-dlp
         run: |
-          pip install yt-dlp
-          sudo apt-get update && sudo apt-get install -y bc
+          pip install -U yt-dlp
+          yt-dlp --version
 
-      - name: Download video (retry up to 5 times)
-        id: download
+      - name: Download Video dengan Teknik Impersonate
         run: |
-          FOLDER="PhVideo"
-          mkdir -p "$FOLDER"
-          touch marker
+          URL="${{ github.event.inputs.url }}"
+          QUALITY="${{ github.event.inputs.quality }}"
 
-          MAX_RETRIES=5
-          RETRY_COUNT=0
-          SUCCESS=false
+          mkdir -p PhVideo
 
-          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-            echo "Download attempt $((RETRY_COUNT+1))/$MAX_RETRIES"
-            yt-dlp \
-              --output "./$FOLDER/%(uploader)s - %(title)s - %(id)s.%(ext)s" \
-              --format "${{ github.event.inputs.quality }}" \
-              --merge-output-format mp4 \
-              --retries 3 \
-              --fragment-retries 10 \
-              --no-check-certificate \
-              --geo-bypass \
-              --no-color \
-              --ignore-errors \
-              --newline \
-              "${{ github.event.inputs.url }}" && {
-                # Verify that a new file was actually created
-                NEW_FILE=$(find "$FOLDER" -type f -newer marker -print -quit)
-                if [ -n "$NEW_FILE" ]; then
-                  echo "Download succeeded: $NEW_FILE"
-                  SUCCESS=true
-                  break
-                else
-                  echo "The download command exited with code 0, but no new file was found. Retrying..."
-                fi
-              } || {
-                echo "Download attempt failed with exit code $?"
-              }
-            RETRY_COUNT=$((RETRY_COUNT+1))
-            if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
-              echo "Waiting 5 seconds before next attempt..."
-              sleep 5
-            fi
-          done
+          echo "🔍 در حال بررسی لینک: $URL"
+          echo "⚙️ کیفیت انتخابی: $QUALITY"
 
-          if [ "$SUCCESS" = false ]; then
-            echo "Error: All $MAX_RETRIES download attempts failed."
-            exit 1
-          fi
+          # تکنیک‌های کلیدی برای رفع ارور سایت‌های بزرگسالان
+          yt-dlp \
+            --output "PhVideo/%(title)s.%(ext)s" \
+            --format "$QUALITY" \
+            --merge-output-format mp4 \
+            --no-check-certificate \
+            --geo-bypass \
+            --impersonate chrome \          # [حیاتی] تقلید از مرورگر کروم (رفع 403)
+            --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
+            --referer "https://www.google.com/" \  # مخفی کردن منبع درخواست
+            --add-header "Accept-Language: en-US,en;q=0.9" \
+            --sleep-interval 5 \              # تاخیر برای جلوگیری از مسدود شدن IP
+            --max-sleep-interval 10 \
+            --verbose \                       # نمایش جزئیات کامل برای دیباگ
+            "$URL"
 
-          FILENAME=$(basename "$NEW_FILE")
-          SIZE_BYTES=$(stat -c %s "$NEW_FILE")
-          echo "filename=$FILENAME" >> $GITHUB_OUTPUT
-          echo "size_bytes=$SIZE_BYTES" >> $GITHUB_OUTPUT
-          echo "Downloaded: $NEW_FILE (${SIZE_BYTES} bytes)"
-        shell: bash
+          echo "✅ دانلود با موفقیت انجام شد!"
+          ls -la PhVideo/
 
-      - name: Install RAR
-        run: sudo apt-get install -y rar
-
-      - name: Conditional split (if file > 99 MB)
-        id: split
+      - name: Push
         run: |
-          FOLDER="PhVideo"
-          FILENAME="${{ steps.download.outputs.filename }}"
-          SIZE_BYTES="${{ steps.download.outputs.size_bytes }}"
-          SIZE_MB=$(echo "scale=2; $SIZE_BYTES / 1048576" | bc)
-          THRESHOLD_MB=99
-
-          cd "$FOLDER"
-
-          if (( $(echo "$SIZE_MB > $THRESHOLD_MB" | bc -l) )); then
-            echo "File size ${SIZE_MB} MB exceeds ${THRESHOLD_MB} MB – splitting into 95 MB RAR parts."
-            # Append a random 6‑character hex suffix to avoid name collisions
-            RANDOM_HEX=$(openssl rand -hex 3)
-            ARCHIVE_NAME="${{ github.event.inputs.archive_name }}_${RANDOM_HEX}"
-            echo "Archive base name: ${ARCHIVE_NAME}"
-            rar a -v95m -m5 -ep1 "${ARCHIVE_NAME}.rar" "$FILENAME"
-            rm "$FILENAME"   # Remove original file after successful split
-            echo "split_done=true" >> $GITHUB_OUTPUT
-            echo "Split completed. Parts created:"
-            ls -lh "${ARCHIVE_NAME}.part"*.rar
-          else
-            echo "File size ${SIZE_MB} MB is ≤${THRESHOLD_MB} MB – keeping original file (no RAR)."
-            echo "split_done=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Commit and push to repository
-        run: |
-          FOLDER="PhVideo"
           git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "$FOLDER/"
-          git commit -m "Add downloaded video(s)"
+          git add PhVideo/
+          git commit -m "Download video with impersonate technique" || echo "Nothing to commit"
           git push
