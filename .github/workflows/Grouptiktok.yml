@@ -1,4 +1,4 @@
-name: tiktok downloader
+name: GR tiktok
 
 on:
   workflow_dispatch:
