@@ -4,17 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       video_url:
-        description: 'TikTok URL'
+        description: 'TikTok URL (video or profile)'
         required: true
         type: string
-      output_format:
-        description: 'Output format'
-        required: true
-        type: choice
-        options:
-          - mp4 (video)
-          - mp3 (audio only)
-        default: 'mp4 (video)'
       output_folder:
         description: 'Folder to store downloads'
         required: false
@@ -31,37 +23,36 @@ jobs:
       contents: write
 
     steps:
-      - name: Clone repository (fast - depth 1)
+      - name: Clone repository
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          fetch-depth: 1    # ← کلید افزایش سرعت clone
+          fetch-depth: 1
 
-      - name: Install yt-dlp
+      - name: Install tools
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y ffmpeg
           pip install -q -U yt-dlp
 
-      - name: Download TikTok video
+      - name: Download media
         run: |
           URL="${{ github.event.inputs.video_url }}"
-          FORMAT="${{ github.event.inputs.output_format }}"
           OUTPUT_FOLDER="${{ github.event.inputs.output_folder }}"
 
           mkdir -p "$OUTPUT_FOLDER"
 
-          if [ "$FORMAT" = "mp3 (audio only)" ]; then
-            yt-dlp -x --audio-format mp3 -o "$OUTPUT_FOLDER/%(title)s.%(ext)s" "$URL"
-          else
-            yt-dlp -f "best[height<=720]+bestaudio" --merge-output-format mp4 -o "$OUTPUT_FOLDER/%(title)s.%(ext)s" "$URL"
-          fi
-
-          echo "✅ Done!"
+          yt-dlp \
+            --extractor-args "tiktok:embed_logger" \
+            -f "bestvideo[height<=720]+bestaudio/best" \
+            --merge-output-format mp4 \
+            -o "$OUTPUT_FOLDER/%(title)s.%(ext)s" \
+            "$URL"
 
       - name: Push changes
         run: |
           git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add "${{ github.event.inputs.output_folder }}/"
-          git commit -m "Download video" || echo "Nothing to commit"
+          git commit -m "Download media" || echo "Nothing to commit"
           git push
