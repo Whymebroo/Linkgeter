@@ -11,7 +11,7 @@ on:
         description: 'پوشه اصلی ذخیره ویدیوها'
         required: false
         type: string
-        default: 'TikToks'
+        default: 'tiktoks'
 
 permissions:
   contents: write
