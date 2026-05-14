@@ -1,119 +1,60 @@
-name: PH SEARCH
+name: PH Search Scraper
 
 on:
   workflow_dispatch:
     inputs:
       search_query:
-        description: 'کلمه یا جمله مورد نظر برای جستجو'
+        description: 'کلمه جستجو (مثلاً Masturbation)'
         required: true
         type: string
       video_count:
-        description: 'تعداد ویدیو برای استخراج'
+        description: 'تعداد ویدیو'
         required: false
         type: number
         default: 10
       sort_by:
-        description: 'مرتب‌سازی نتایج'
+        description: 'مرتب‌سازی'
         required: false
         type: choice
         options:
-          - relevance (مرتبط‌ترین)
-          - date (جدیدترین)
-          - views (پربازدیدترین)
-          - rating (امتیاز)
-        default: 'relevance (مرتبط‌ترین)'
+          - relevance
+          - newest
+          - mostviewed
+          - rating
+        default: 'newest'
 
 permissions:
   contents: write
 
 jobs:
-  search-pornhub:
+  scrape-pornhub:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
+    
     steps:
-      - name: Clone repository
+      - name: Checkout repo
         uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          python-version: '3.11'
 
-      - name: Install yt-dlp
+      - name: Install dependencies
         run: |
-          pip install -q -U yt-dlp
+          pip install playwright beautifulsoup4
+          playwright install chromium --with-deps
 
-      - name: Search Pornhub and extract links with details
+      - name: Scrape Pornhub
         run: |
-          SEARCH="${{ github.event.inputs.search_query }}"
-          COUNT="${{ github.event.inputs.video_count }}"
-          SORT="${{ github.event.inputs.sort_by }}"
-          
-          # ساخت پوشه
-          OUTPUT_DIR="PhResults"
-          mkdir -p "$OUTPUT_DIR"
-          
-          # اسم فایل امن
-          SAFE_NAME=$(echo "$SEARCH" | sed 's/[^a-zA-Z0-9\-_]//g' | sed 's/ /_/g' | tr '[:upper:]' '[:lower:]')
-          
-          echo "🔍 در حال جستجوی '$SEARCH' در Pornhub..."
-          echo "🎯 مرتب‌سازی: $SORT"
-          echo "📊 تعداد: $COUNT ویدیو"
-          
-          # ایجاد فایل با هدر
-          {
-            echo "# نتایج جستجوی Pornhub"
-            echo "# کلمه جستجو: ${SEARCH}"
-            echo "# مرتب‌سازی: ${SORT}"
-            echo "# تعداد درخواستی: ${COUNT}"
-            echo "# تاریخ: $(date '+%Y-%m-%d %H:%M:%S')"
-            echo ""
-            echo "لینک | عنوان ویدیو | آپلودر | بازدیدها | مدت زمان"
-            echo "-----|------------|--------|---------|-----------"
-          } > "${OUTPUT_DIR}/pornhub_${SAFE_NAME}.txt"
-          
-          # ساخت URL جستجو
-          SEARCH_URL="https://www.pornhub.com/video/search?search=$(echo "$SEARCH" | sed 's/ /+/g')"
-          
-          case "$SORT" in
-            "date (جدیدترین)")      SEARCH_URL="${SEARCH_URL}&o=cm" ;;
-            "views (پربازدیدترین)") SEARCH_URL="${SEARCH_URL}&o=mv" ;;
-            "rating (امتیاز)")      SEARCH_URL="${SEARCH_URL}&o=tr" ;;
-            *) ;;
-          esac
-          
-          echo "🔗 آدرس جستجو: $SEARCH_URL"
-          
-          # استخراج اطلاعات — بهبود یافته برای مدت زمان
-          yt-dlp \
-            --flat-playlist \
-            --print "%(webpage_url)s | %(title)s | %(uploader)s | %(view_count)s | %(duration_string)s" \
-            --playlist-items "1-$COUNT" \
-            "$SEARCH_URL" >> "${OUTPUT_DIR}/pornhub_${SAFE_NAME}.txt" 2>&1 || echo "⚠️ برخی ویدیوها استخراج نشدند"
-          
-          LINK_COUNT=$(grep -c "https://www.pornhub.com" "${OUTPUT_DIR}/pornhub_${SAFE_NAME}.txt" 2>/dev/null || echo 0)
-          
-          if [ "$LINK_COUNT" -eq 0 ]; then
-            echo "⚠️ هیچ ویدیویی پیدا نشد!"
-          else
-            echo "✅ ${LINK_COUNT} لینک ویدیو استخراج شد"
-          fi
-          
-          echo "📁 فایل ذخیره شد: ${OUTPUT_DIR}/pornhub_${SAFE_NAME}.txt"
+          python scrape_ph.py \
+            --query "${{ github.event.inputs.search_query }}" \
+            --count ${{ github.event.inputs.video_count }} \
+            --sort ${{ github.event.inputs.sort_by }}
 
-      - name: Push changes to repository
+      - name: Commit and push results
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          
           git add PhResults/ || true
-          
-          if git diff --staged --quiet; then
-            echo "ℹ️ هیچ تغییری برای کامیت وجود ندارد"
-          else
-            git commit -m "Add Pornhub search results for '${{ github.event.inputs.search_query }}' [skip ci]"
-            echo "✅ تغییرات کامیت شد"
-          fi
-          
-          # Push امن
-          git pull --rebase origin ${{ github.ref }} || true
-          git push || echo "⚠️ Push انجام نشد (احتمالاً تغییری وجود نداشته)"
+          git commit -m "Update PH search results - $(date '+%Y-%m-%d %H:%M')" || echo "No changes"
+          git push
