@@ -1,4 +1,4 @@
-name: GR tiktok
+name:GR tiktok
 
 on:
   workflow_dispatch:
@@ -8,10 +8,10 @@ on:
         required: true
         type: string
       output_folder:
-        description: 'پوشه ذخیره ویدیوها'
+        description: 'پوشه اصلی ذخیره ویدیوها'
         required: false
         type: string
-        default: 'tiktoks'
+        default: 'TikToks'
 
 permissions:
   contents: write
@@ -38,8 +38,12 @@ jobs:
       - name: Download all videos from links file
         run: |
           SOURCE_FILE="links/${{ github.event.inputs.source_file }}"
-          OUTPUT_FOLDER="${{ github.event.inputs.output_folder }}"
-
+          BASE_OUTPUT="${{ github.event.inputs.output_folder }}"
+          
+          # گرفتن اسم فایل بدون پسوند .txt
+          FILENAME=$(basename "$SOURCE_FILE" .txt)
+          OUTPUT_FOLDER="$BASE_OUTPUT/$FILENAME"
+          
           # بررسی وجود فایل
           if [ ! -f "$SOURCE_FILE" ]; then
             echo "❌ فایل $SOURCE_FILE پیدا نشد!"
@@ -50,27 +54,28 @@ jobs:
 
           mkdir -p "$OUTPUT_FOLDER"
 
-          echo "📁 خواندن لینک‌ها از: $SOURCE_FILE"
+          echo "📁 فایل لینک‌ها: $SOURCE_FILE"
+          echo "📁 پوشه خروجی: $OUTPUT_FOLDER"
           
           # استخراج لینک‌ها از فایل (خطوطی که با https شروع می‌شن)
           grep -E "https?://" "$SOURCE_FILE" > /tmp/links.txt
           
           TOTAL=$(wc -l < /tmp/links.txt)
-          echo "🔍 تعداد لینک‌های پیدا شده: $TOTAL"
+          echo "🔍 تعداد کل لینک‌ها: $TOTAL"
           
           if [ "$TOTAL" -eq 0 ]; then
             echo "❌ هیچ لینکی توی فایل پیدا نشد!"
             exit 1
           fi
           
-          # نمایش چند لینک اول
-          echo "===== لینک‌ها ====="
-          head -5 /tmp/links.txt
-          echo "..."
-          echo "=================="
+          # نمایش همه لینک‌ها برای دیباگ
+          echo "===== لیست لینک‌ها ====="
+          cat /tmp/links.txt
+          echo "======================="
           
           COUNT=0
           SUCCESS=0
+          FAILED_LINKS=""
           
           while IFS= read -r URL; do
             if [ -n "$URL" ]; then
@@ -78,16 +83,20 @@ jobs:
               echo ""
               echo "📥 [$COUNT/$TOTAL] دانلود: $URL"
               
+              # حذف کاراکترهای اضافی مثل回车 و فاصله
+              URL_CLEAN=$(echo "$URL" | tr -d '\r' | xargs)
+              
               if yt-dlp \
                 --extractor-args "tiktok:embed_logger" \
                 -f "bestvideo[height<=720]+bestaudio/best" \
                 --merge-output-format mp4 \
                 -o "$OUTPUT_FOLDER/%(title)s.%(ext)s" \
-                "$URL"; then
+                "$URL_CLEAN"; then
                 SUCCESS=$((SUCCESS + 1))
                 echo "✅ موفق"
               else
-                echo "❌ خطا در دانلود"
+                echo "❌ خطا در دانلود: $URL_CLEAN"
+                FAILED_LINKS="$FAILED_LINKS\n$URL_CLEAN"
               fi
             fi
           done < /tmp/links.txt
@@ -96,7 +105,14 @@ jobs:
           echo "========== جمع‌بندی =========="
           echo "✅ دانلود موفق: $SUCCESS از $COUNT"
           echo "📁 پوشه خروجی: $OUTPUT_FOLDER"
-          ls -la "$OUTPUT_FOLDER/"
+          echo "📊 فایل‌های ذخیره شده:"
+          ls -la "$OUTPUT_FOLDER/" || echo "هیچ فایلی ذخیره نشد"
+          
+          if [ -n "$FAILED_LINKS" ]; then
+            echo ""
+            echo "❌ لینک‌های ناموفق:"
+            echo -e "$FAILED_LINKS"
+          fi
 
       - name: Push changes
         run: |
