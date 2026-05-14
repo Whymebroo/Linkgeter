@@ -1,0 +1,64 @@
+name: Bulk TikTok Downloader
+
+on:
+  workflow_dispatch:
+    inputs:
+      links_text:
+        description: 'لینک‌های تیک‌تاک (هر لینک در یک خط)'
+        required: true
+        type: string
+      output_folder:
+        description: 'پوشه خروجی'
+        required: false
+        type: string
+        default: 'bulk_tiktoks'
+
+permissions:
+  contents: write
+
+jobs:
+  bulk-download:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install yt-dlp
+        run: |
+          sudo apt-get install -y ffmpeg
+          pip install -U yt-dlp
+
+      - name: Download all videos
+        run: |
+          mkdir -p "${{ github.event.inputs.output_folder }}"
+          
+          cat > links.txt << 'EOF'
+          ${{ github.event.inputs.links_text }}
+          EOF
+          
+          echo "🔍 تعداد لینک‌ها: $(wc -l < links.txt)"
+          
+          COUNT=0
+          TOTAL=$(wc -l < links.txt)
+          
+          while IFS= read -r URL; do
+            if [ -n "$URL" ]; then
+              COUNT=$((COUNT + 1))
+              echo "📥 [$COUNT/$TOTAL] دانلود: $URL"
+              yt-dlp \
+                -f "bestvideo[height<=720]+bestaudio" \
+                --merge-output-format mp4 \
+                -o "${{ github.event.inputs.output_folder }}/%(title)s.%(ext)s" \
+                "$URL" || echo "❌ خطا: $URL"
+            fi
+          done < links.txt
+          
+          echo "✅ دانلود $COUNT ویدیو کامل شد!"
+
+      - name: Push
+        run: |
+          git config user.name "github-actions[bot]"
+          git add "${{ github.event.inputs.output_folder }}/"
+          git commit -m "Bulk TikTok download" || echo "Nothing to commit"
+          git push
