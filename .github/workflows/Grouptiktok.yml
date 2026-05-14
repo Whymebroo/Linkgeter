@@ -1,4 +1,4 @@
-name:GR tiktok
+name: Tiktoks groups
 
 on:
   workflow_dispatch:
