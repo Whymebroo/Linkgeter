@@ -1,64 +1,107 @@
-name: Bulk TikTok Downloader
+name: tiktok downloader
 
 on:
   workflow_dispatch:
     inputs:
-      links_text:
-        description: 'لینک‌های تیک‌تاک (هر لینک در یک خط)'
+      source_file:
+        description: 'اسم فایل توی پوشه links (مثل cristiano.txt)'
         required: true
         type: string
       output_folder:
-        description: 'پوشه خروجی'
+        description: 'پوشه ذخیره ویدیوها'
         required: false
         type: string
-        default: 'bulk_tiktoks'
+        default: 'tiktoks'
 
 permissions:
   contents: write
 
 jobs:
-  bulk-download:
+  fetch-and-store:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Clone repository
+        uses: actions/checkout@v4
         with:
+          token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 1
 
-      - name: Install yt-dlp
+      - name: Install tools
         run: |
+          sudo apt-get update -qq
           sudo apt-get install -y ffmpeg
-          pip install -U yt-dlp
+          pip install -q -U yt-dlp
 
-      - name: Download all videos
+      - name: Download all videos from links file
         run: |
-          mkdir -p "${{ github.event.inputs.output_folder }}"
+          SOURCE_FILE="links/${{ github.event.inputs.source_file }}"
+          OUTPUT_FOLDER="${{ github.event.inputs.output_folder }}"
+
+          # بررسی وجود فایل
+          if [ ! -f "$SOURCE_FILE" ]; then
+            echo "❌ فایل $SOURCE_FILE پیدا نشد!"
+            echo "📁 فایل‌های موجود در پوشه links:"
+            ls -la links/ || echo "پوشه links خالی است"
+            exit 1
+          fi
+
+          mkdir -p "$OUTPUT_FOLDER"
+
+          echo "📁 خواندن لینک‌ها از: $SOURCE_FILE"
           
-          cat > links.txt << 'EOF'
-          ${{ github.event.inputs.links_text }}
-          EOF
+          # استخراج لینک‌ها از فایل (خطوطی که با https شروع می‌شن)
+          grep -E "https?://" "$SOURCE_FILE" > /tmp/links.txt
           
-          echo "🔍 تعداد لینک‌ها: $(wc -l < links.txt)"
+          TOTAL=$(wc -l < /tmp/links.txt)
+          echo "🔍 تعداد لینک‌های پیدا شده: $TOTAL"
+          
+          if [ "$TOTAL" -eq 0 ]; then
+            echo "❌ هیچ لینکی توی فایل پیدا نشد!"
+            exit 1
+          fi
+          
+          # نمایش چند لینک اول
+          echo "===== لینک‌ها ====="
+          head -5 /tmp/links.txt
+          echo "..."
+          echo "=================="
           
           COUNT=0
-          TOTAL=$(wc -l < links.txt)
+          SUCCESS=0
           
           while IFS= read -r URL; do
             if [ -n "$URL" ]; then
               COUNT=$((COUNT + 1))
+              echo ""
               echo "📥 [$COUNT/$TOTAL] دانلود: $URL"
-              yt-dlp \
-                -f "bestvideo[height<=720]+bestaudio" \
+              
+              if yt-dlp \
+                --extractor-args "tiktok:embed_logger" \
+                -f "bestvideo[height<=720]+bestaudio/best" \
                 --merge-output-format mp4 \
-                -o "${{ github.event.inputs.output_folder }}/%(title)s.%(ext)s" \
-                "$URL" || echo "❌ خطا: $URL"
+                -o "$OUTPUT_FOLDER/%(title)s.%(ext)s" \
+                "$URL"; then
+                SUCCESS=$((SUCCESS + 1))
+                echo "✅ موفق"
+              else
+                echo "❌ خطا در دانلود"
+              fi
             fi
-          done < links.txt
+          done < /tmp/links.txt
           
-          echo "✅ دانلود $COUNT ویدیو کامل شد!"
+          echo ""
+          echo "========== جمع‌بندی =========="
+          echo "✅ دانلود موفق: $SUCCESS از $COUNT"
+          echo "📁 پوشه خروجی: $OUTPUT_FOLDER"
+          ls -la "$OUTPUT_FOLDER/"
 
-      - name: Push
+      - name: Push changes
         run: |
           git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add "${{ github.event.inputs.output_folder }}/"
-          git commit -m "Bulk TikTok download" || echo "Nothing to commit"
+          git commit -m "Download TikTok videos" || echo "Nothing to commit"
           git push
