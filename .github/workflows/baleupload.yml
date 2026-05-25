@@ -1,46 +1,14 @@
-name: Download & Split for Bale
-
-on:
-  repository_dispatch:
-    types: [bale-download]
-
-jobs:
-  process:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      
-      - name: Install yt-dlp
-        run: pip install yt-dlp
-      
-      - name: Download video from link
-        run: |
-          yt-dlp "${{ github.event.client_payload.url }}" -o "video.%(ext)s"
-      
-      - name: Get file info
-        id: file_info
-        run: |
-          FILE=$(ls video.* | head -1)
-          SIZE=$(stat -c%s "$FILE")
-          echo "file=$FILE" >> $GITHUB_OUTPUT
-          echo "size=$SIZE" >> $GITHUB_OUTPUT
-      
-      - name: Split file into 19MB parts (if needed)
-        if: steps.file_info.outputs.size > 19922944
-        run: split -b 19M "${{ steps.file_info.outputs.file }}" part_
-      
-      - name: Upload to Bale channel
-        env:
-          BOT_TOKEN: ${{ secrets.BALE_BOT_TOKEN }}
-          CHANNEL_ID: ${{ secrets.BALE_CHANNEL_ID }}
-        run: |
-          BALE_API="https://api.bale.ai/v1/bot$BOT_TOKEN"
-          
-          if ls part_* 1> /dev/null 2>&1; then
-            for file in part_*; do
-              curl -F "chat_id=$CHANNEL_ID" -F "document=@$file" "$BALE_API/sendDocument"
-            done
-          else
-            curl -F "chat_id=$CHANNEL_ID" -F "document=@${{ steps.file_info.outputs.file }}" "$BALE_API/sendDocument"
-          fi
+- name: Upload to Bale (direct to user)
+  env:
+    BOT_TOKEN: ${{ secrets.BALE_BOT_TOKEN }}
+  run: |
+    BALE_API="https://api.bale.ai/v1/bot$BOT_TOKEN"
+    CHAT_ID="${{ github.event.client_payload.chat_id }}"
+    
+    if ls part_* 1> /dev/null 2>&1; then
+      for file in part_*; do
+        curl -F "chat_id=$CHAT_ID" -F "document=@$file" "$BALE_API/sendDocument"
+      done
+    else
+      curl -F "chat_id=$CHAT_ID" -F "document=@${{ steps.file_info.outputs.file }}" "$BALE_API/sendDocument"
+    fi
